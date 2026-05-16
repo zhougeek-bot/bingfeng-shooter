@@ -15,7 +15,6 @@
         .upgrade-btn { background:#166534; color:white; border:2px solid #4ade80; padding:16px 24px; margin:10px 0; font-size:18px; border-radius:12px; width:90%; max-width:320px; text-align:center; }
         .upgrade-btn:active { background:#4ade80; color:#0f172a; }
 
-        /* Virtual Joystick - fixed positioning */
         #joystick-container {
             position: absolute;
             bottom: 25px;
@@ -24,7 +23,6 @@
             width: 160px;
             height: 160px;
             z-index: 150;
-            pointer-events: none; /* container doesn't block */
         }
         #joystick-base {
             position: absolute;
@@ -36,7 +34,6 @@
             background: rgba(71, 85, 105, 0.35);
             border: 4px solid #64748b;
             border-radius: 50%;
-            pointer-events: auto;
         }
         #joystick-knob {
             position: absolute;
@@ -49,7 +46,7 @@
             border-radius: 50%;
             box-shadow: 0 4px 12px rgba(34, 197, 94, 0.5);
             pointer-events: none;
-            transition: transform 0.05s ease-out;
+            transition: left 0.05s ease-out, bottom 0.05s ease-out;
         }
     </style>
 </head>
@@ -61,7 +58,6 @@
         <div id="upgrade-options"></div>
     </div>
 
-    <!-- Virtual Joystick -->
     <div id="joystick-container">
         <div id="joystick-base"></div>
         <div id="joystick-knob"></div>
@@ -117,23 +113,14 @@
                 g.gain.value = 0.2;
                 o.connect(g); g.connect(audioCtx.destination);
                 o.start();
-                setTimeout(() => {
-                    g.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
-                    o.stop(audioCtx.currentTime + 0.15);
-                }, 30);
+                setTimeout(() => { g.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.12); o.stop(audioCtx.currentTime + 0.15); }, 30);
             } catch(e){}
         }
 
         function createExplosion(x, y, size = 1) {
             for (let i = 0; i < 10; i++) {
                 const ang = Math.random() * Math.PI * 2;
-                particles.push({
-                    x, y,
-                    vx: Math.cos(ang) * (2 + Math.random() * 2.5) * size,
-                    vy: Math.sin(ang) * (2 + Math.random() * 2.5) * size,
-                    life: 22 + Math.random() * 15,
-                    size: 2.8 * size
-                });
+                particles.push({ x, y, vx: Math.cos(ang)*(2+Math.random()*2.5)*size, vy: Math.sin(ang)*(2+Math.random()*2.5)*size, life: 22+Math.random()*15, size: 2.8*size });
             }
         }
 
@@ -153,9 +140,8 @@
             const angle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
             const bulletSpeed = currentWeapon === 'shotgun' ? 8 : 11;
             const startDist = player.radius + 10;
-
-            let count = (currentWeapon === 'shotgun') ? 5 : playerStats.multiShot;
-            let spread = (currentWeapon === 'shotgun') ? 0.38 : 0;
+            let count = currentWeapon === 'shotgun' ? 5 : playerStats.multiShot;
+            let spread = currentWeapon === 'shotgun' ? 0.38 : 0;
 
             for (let i = 0; i < count; i++) {
                 let a = angle + (i - (count-1)/2) * spread;
@@ -195,19 +181,15 @@
         function update() {
             if (gameState !== 'playing') return;
 
-            // Joystick movement
             if (joystickActive) {
                 player.x += joystickDir.x * playerStats.moveSpeed;
                 player.y += joystickDir.y * playerStats.moveSpeed;
             }
-
             player.x = Math.max(25, Math.min(canvas.width-25, player.x));
             player.y = Math.max(25, Math.min(canvas.height-25, player.y));
 
             const nearest = findNearestEnemy();
-            if (nearest) {
-                player.angle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
-            }
+            if (nearest) player.angle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
 
             const now = Date.now();
             if (currentWeapon === 'melee') {
@@ -216,14 +198,12 @@
                 shoot();
             }
 
-            // Bullets
             for (let i=bullets.length-1; i>=0; i--) {
                 const b = bullets[i];
                 b.x += b.vx; b.y += b.vy; b.life--;
                 if (b.life <= 0 || b.x<0 || b.x>canvas.width || b.y<0 || b.y>canvas.height) bullets.splice(i,1);
             }
 
-            // Enemies
             for (let i=enemies.length-1; i>=0; i--) {
                 const e = enemies[i];
                 const dx = player.x - e.x, dy = player.y - e.y;
@@ -239,7 +219,6 @@
                 }
             }
 
-            // Bullet collision
             for (let bi=bullets.length-1; bi>=0; bi--) {
                 const b = bullets[bi];
                 for (let ei=enemies.length-1; ei>=0; ei--) {
@@ -258,14 +237,12 @@
                 }
             }
 
-            // Particles
             for (let i=particles.length-1; i>=0; i--) {
                 const p = particles[i];
                 p.x += p.vx; p.y += p.vy; p.life--;
                 if (p.life <= 0) particles.splice(i,1);
             }
 
-            // Spawn
             if (enemies.length < 13 && enemiesKilledThisWave < waveEnemyTarget && Date.now() - lastSpawnTime > 720) {
                 spawnEnemy();
                 lastSpawnTime = Date.now();
@@ -307,14 +284,11 @@
             ctx.fillStyle = '#22c55e';
             ctx.beginPath(); ctx.arc(0,-9,3.5,0,Math.PI*2); ctx.fill();
 
-            // Weapon
             if (currentWeapon === 'melee') {
                 ctx.strokeStyle = '#e2e8f0';
                 ctx.lineWidth = 3.5;
                 ctx.beginPath();
-                ctx.moveTo(4,-1);
-                ctx.lineTo(17,-7);
-                ctx.stroke();
+                ctx.moveTo(4,-1); ctx.lineTo(17,-7); ctx.stroke();
             } else {
                 ctx.fillStyle = '#64748b';
                 ctx.fillRect(5,-2.5,15,5);
@@ -328,14 +302,10 @@
 
             ctx.strokeStyle = '#1e2937';
             ctx.lineWidth = 1;
-            for(let x=0; x<canvas.width; x+=48){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
-            for(let y=0; y<canvas.height; y+=48){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
+            for(let x=0; x<canvas.width; x+=48){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,canvas.height);ctx.stroke();}
+            for(let y=0; y<canvas.height; y+=48){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(canvas.width,y);ctx.stroke();}
 
-            for(let e of enemies){
-                ctx.fillStyle = '#ef4444';
-                ctx.beginPath(); ctx.arc(e.x,e.y,e.radius,0,Math.PI*2); ctx.fill();
-            }
-
+            for(let e of enemies){ ctx.fillStyle='#ef4444'; ctx.beginPath(); ctx.arc(e.x,e.y,e.radius,0,Math.PI*2); ctx.fill(); }
             drawHero();
 
             ctx.fillStyle = '#facc15';
@@ -358,6 +328,10 @@
         function gameLoop() {
             if(gameState === 'playing') update();
             draw();
+
+            // Control joystick interactivity based on state
+            const isPlaying = gameState === 'playing';
+            joystickBase.style.pointerEvents = isPlaying ? 'auto' : 'none';
 
             if(gameState === 'start'){
                 ctx.fillStyle = 'rgba(15,23,42,0.9)';
@@ -406,38 +380,29 @@
             playerStats = { fireCooldown: 260, damage: 1, moveSpeed: 3.8, multiShot: 1 };
             gameState = 'playing';
             joystickActive = false;
-            joystickDir = {x:0, y:0};
+            joystickDir = {x:0,y:0};
             resetJoystickVisual();
         }
 
         function showUpgradeScreen() {
             gameState = 'upgrading';
             upgradeOptions.innerHTML = '';
-
             const opts = [
-                {n:'手枪升级', d:'射速上升 + 伤害', f:()=>{currentWeapon='pistol'; playerStats.fireCooldown*=0.8; playerStats.damage+=0.7; weaponLevel++;}},
-                {n:'霰弹枪', d:'切换为散弹武器', f:()=>{currentWeapon='shotgun'; weaponLevel=1;}},
-                {n:'近战剑', d:'切换为近身战斗', f:()=>{currentWeapon='melee'; weaponLevel=1;}},
-                {n:'移动加速', d:'移动速度提升', f:()=>{playerStats.moveSpeed *= 1.2;}},
-                {n:'提升伤害', d:'全体伤害 +1', f:()=>{playerStats.damage += 1;}}
+                {n:'手枪升级',d:'射速上升 + 伤害',f:()=>{currentWeapon='pistol';playerStats.fireCooldown*=0.8;playerStats.damage+=0.7;weaponLevel++;}},
+                {n:'霰弹枪',d:'切换为散弹武器',f:()=>{currentWeapon='shotgun';weaponLevel=1;}},
+                {n:'近战剑',d:'切换为近身战斗',f:()=>{currentWeapon='melee';weaponLevel=1;}},
+                {n:'移动加速',d:'移动速度提升',f:()=>{playerStats.moveSpeed*=1.2;}},
+                {n:'提升伤害',d:'全体伤害+1',f:()=>{playerStats.damage+=1;}}
             ];
             const chosen = opts.sort(()=>Math.random()-0.5).slice(0,3);
-
-            chosen.forEach(o => {
-                const b = document.createElement('div');
-                b.className = 'upgrade-btn';
-                b.innerHTML = `<strong>${o.n}</strong><br><small>${o.d}</small>`;
-                b.onclick = () => {
-                    o.f();
-                    upgradeOverlay.style.display='none';
-                    currentWave++;
-                    enemiesKilledThisWave=0;
-                    waveEnemyTarget = 10 + currentWave*4;
-                    gameState = 'playing';
-                };
+            chosen.forEach(o=>{
+                const b=document.createElement('div');
+                b.className='upgrade-btn';
+                b.innerHTML=`<strong>${o.n}</strong><br><small>${o.d}</small>`;
+                b.onclick=()=>{o.f();upgradeOverlay.style.display='none';currentWave++;enemiesKilledThisWave=0;waveEnemyTarget=10+currentWave*4;gameState='playing';};
                 upgradeOptions.appendChild(b);
             });
-            upgradeOverlay.style.display = 'flex';
+            upgradeOverlay.style.display='flex';
         }
 
         function updateJoystickVisual(dx, dy) {
@@ -455,20 +420,13 @@
             const rect = joystickBase.getBoundingClientRect();
             const cx = rect.left + rect.width/2;
             const cy = rect.top + rect.height/2;
-
             let dx = clientX - cx;
             let dy = clientY - cy;
             const dist = Math.hypot(dx, dy);
             const max = 48;
-
-            if (dist > max) {
-                dx = dx / dist * max;
-                dy = dy / dist * max;
-            }
-
+            if(dist > max){ dx = dx/dist * max; dy = dy/dist * max; }
             joystickDir.x = dx / max;
             joystickDir.y = dy / max;
-
             updateJoystickVisual(joystickDir.x, joystickDir.y);
         }
 
@@ -478,23 +436,20 @@
             resetJoystickVisual();
         }
 
-        // === Touch Handling (Fixed) ===
         function handleTouchStart(e) {
             e.preventDefault();
             const touch = e.touches[0];
 
-            // Priority: Start or Game Over screen
             if (gameState === 'start' || gameState === 'gameover') {
                 startNewRun();
                 return;
             }
 
-            // Joystick area check
             const rect = joystickBase.getBoundingClientRect();
-            const inJoystick = (touch.clientX > rect.left - 25 && touch.clientX < rect.right + 25 &&
-                              touch.clientY > rect.top - 25 && touch.clientY < rect.bottom + 25);
+            const inJoystick = (touch.clientX > rect.left-25 && touch.clientX < rect.right+25 &&
+                              touch.clientY > rect.top-25 && touch.clientY < rect.bottom+25);
 
-            if (inJoystick) {
+            if (inJoystick && gameState === 'playing') {
                 joystickActive = true;
                 joystickTouchId = touch.identifier;
                 updateJoystickFromTouch(touch.clientX, touch.clientY);
@@ -503,8 +458,7 @@
 
         function handleTouchMove(e) {
             e.preventDefault();
-            if (!joystickActive) return;
-
+            if (!joystickActive || gameState !== 'playing') return;
             for (let t of e.touches) {
                 if (t.identifier === joystickTouchId) {
                     updateJoystickFromTouch(t.clientX, t.clientY);
@@ -528,14 +482,17 @@
         canvas.addEventListener('touchmove', handleTouchMove, {passive:false});
         canvas.addEventListener('touchend', handleTouchEnd, {passive:false});
 
-        // Mouse fallback
         canvas.addEventListener('mousedown', (e) => {
-            if (gameState === 'start' || gameState === 'gameover') {
-                startNewRun();
-            }
+            if (gameState === 'start' || gameState === 'gameover') startNewRun();
         });
 
         canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+        function resetJoystickOnStateChange() {
+            joystickActive = false;
+            resetJoystickVisual();
+            joystickBase.style.pointerEvents = (gameState === 'playing') ? 'auto' : 'none';
+        }
 
         resizeCanvas();
         gameLoop();
