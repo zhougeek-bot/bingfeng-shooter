@@ -9,18 +9,53 @@
     <style>
         * { margin:0; padding:0; box-sizing:border-box; }
         html, body { width:100%; height:100%; overflow:hidden; background:#0a0f0a; touch-action:none; }
-        #game { display:block; width:100vw; height:100vh; background:#0f172a; touch-action:none; }
+        #game { display:block; width:100vw; height:100vh; background:#0f172a; touch-action:none; z-index:1; }
         #upgrade-overlay { position:absolute; top:0; left:0; right:0; bottom:0; background:rgba(15,23,42,0.95); display:none; flex-direction:column; justify-content:center; align-items:center; z-index:200; color:#e0f2fe; padding:20px; }
         .upgrade-title { font-size:26px; margin-bottom:20px; color:#22c55e; }
         .upgrade-btn { background:#166534; color:white; border:2px solid #4ade80; padding:16px 24px; margin:10px 0; font-size:18px; border-radius:12px; width:90%; max-width:320px; text-align:center; }
         .upgrade-btn:active { background:#4ade80; color:#0f172a; }
-        #joystick-container { position:absolute; bottom:30px; left:50%; transform:translateX(-50%); width:160px; height:160px; z-index:150; pointer-events:none; }
-        #joystick-base { position:absolute; bottom:0; left:50%; transform:translateX(-50%); width:120px; height:120px; background:rgba(100,116,139,0.3); border:3px solid #64748b; border-radius:50%; }
-        #joystick-knob { position:absolute; bottom:30px; left:50%; transform:translateX(-50%); width:50px; height:50px; background:#22c55e; border-radius:50%; box-shadow:0 0 10px rgba(34,197,94,0.6); }
+
+        /* Virtual Joystick - fixed positioning */
+        #joystick-container {
+            position: absolute;
+            bottom: 25px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 160px;
+            height: 160px;
+            z-index: 150;
+            pointer-events: none; /* container doesn't block */
+        }
+        #joystick-base {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 130px;
+            height: 130px;
+            background: rgba(71, 85, 105, 0.35);
+            border: 4px solid #64748b;
+            border-radius: 50%;
+            pointer-events: auto;
+        }
+        #joystick-knob {
+            position: absolute;
+            bottom: 55px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 52px;
+            height: 52px;
+            background: #22c55e;
+            border-radius: 50%;
+            box-shadow: 0 4px 12px rgba(34, 197, 94, 0.5);
+            pointer-events: none;
+            transition: transform 0.05s ease-out;
+        }
     </style>
 </head>
 <body>
     <canvas id="game"></canvas>
+
     <div id="upgrade-overlay">
         <div class="upgrade-title">选择升级 / 武器</div>
         <div id="upgrade-options"></div>
@@ -37,8 +72,9 @@
         const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
         const upgradeOverlay = document.getElementById('upgrade-overlay');
         const upgradeOptions = document.getElementById('upgrade-options');
-        const joystickKnob = document.getElementById('joystick-knob');
+        const joystickContainer = document.getElementById('joystick-container');
         const joystickBase = document.getElementById('joystick-base');
+        const joystickKnob = document.getElementById('joystick-knob');
 
         let gameState = 'start';
         let score = 0;
@@ -46,12 +82,9 @@
         let enemiesKilledThisWave = 0;
         let waveEnemyTarget = 10;
 
-        // Player & Hero
         let player = { x: 400, y: 300, radius: 14, speed: 3.8, health: 100, maxHealth: 100, angle: 0 };
         let playerStats = { fireCooldown: 260, damage: 1, moveSpeed: 3.8, multiShot: 1 };
-
-        // Weapon system
-        let currentWeapon = 'pistol'; // pistol, shotgun, melee
+        let currentWeapon = 'pistol';
         let weaponLevel = 1;
 
         let bullets = [];
@@ -60,7 +93,6 @@
         let lastShotTime = 0;
         let lastMeleeTime = 0;
 
-        // Joystick
         let joystickActive = false;
         let joystickDir = { x: 0, y: 0 };
         let joystickTouchId = null;
@@ -72,38 +104,42 @@
         window.addEventListener('resize', resizeCanvas);
         window.addEventListener('load', resizeCanvas);
 
-        // Audio
         let audioCtx;
-        function initAudio() { if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
 
         function playShootSound() {
             initAudio();
             try {
-                const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
-                o.type = 'sawtooth'; o.frequency.value = currentWeapon === 'melee' ? 180 : 780;
-                g.gain.value = 0.18;
+                const o = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                o.type = currentWeapon === 'melee' ? 'sine' : 'sawtooth';
+                o.frequency.value = currentWeapon === 'melee' ? 160 : 820;
+                g.gain.value = 0.2;
                 o.connect(g); g.connect(audioCtx.destination);
                 o.start();
-                setTimeout(() => { g.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.15); o.stop(audioCtx.currentTime + 0.2); }, 40);
+                setTimeout(() => {
+                    g.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+                    o.stop(audioCtx.currentTime + 0.15);
+                }, 30);
             } catch(e){}
         }
 
         function createExplosion(x, y, size = 1) {
-            for(let i = 0; i < 12; i++) {
+            for (let i = 0; i < 10; i++) {
                 const ang = Math.random() * Math.PI * 2;
                 particles.push({
                     x, y,
-                    vx: Math.cos(ang) * (1.5 + Math.random() * 3) * size,
-                    vy: Math.sin(ang) * (1.5 + Math.random() * 3) * size,
-                    life: 20 + Math.random() * 18,
-                    size: 2.5 * size
+                    vx: Math.cos(ang) * (2 + Math.random() * 2.5) * size,
+                    vy: Math.sin(ang) * (2 + Math.random() * 2.5) * size,
+                    life: 22 + Math.random() * 15,
+                    size: 2.8 * size
                 });
             }
         }
 
         function findNearestEnemy() {
             if (enemies.length === 0) return null;
-            let nearest = null; let minD = Infinity;
+            let nearest = null, minD = Infinity;
             for (let e of enemies) {
                 const d = Math.hypot(e.x - player.x, e.y - player.y);
                 if (d < minD) { minD = d; nearest = e; }
@@ -114,30 +150,22 @@
         function shoot() {
             const nearest = findNearestEnemy();
             if (!nearest) return;
-
             const angle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
-            const bulletSpeed = currentWeapon === 'shotgun' ? 8.5 : 11;
+            const bulletSpeed = currentWeapon === 'shotgun' ? 8 : 11;
             const startDist = player.radius + 10;
 
-            let count = playerStats.multiShot;
-            let spread = 0;
-
-            if (currentWeapon === 'shotgun') {
-                count = 4 + Math.floor(weaponLevel / 2);
-                spread = 0.35;
-            }
+            let count = (currentWeapon === 'shotgun') ? 5 : playerStats.multiShot;
+            let spread = (currentWeapon === 'shotgun') ? 0.38 : 0;
 
             for (let i = 0; i < count; i++) {
-                let a = angle;
-                if (count > 1) a += (i - (count-1)/2) * spread;
-
+                let a = angle + (i - (count-1)/2) * spread;
                 bullets.push({
                     x: player.x + Math.cos(a) * startDist,
                     y: player.y + Math.sin(a) * startDist,
                     vx: Math.cos(a) * bulletSpeed,
                     vy: Math.sin(a) * bulletSpeed,
-                    damage: playerStats.damage * (currentWeapon === 'shotgun' ? 0.7 : 1),
-                    life: currentWeapon === 'shotgun' ? 35 : 60
+                    damage: playerStats.damage * (currentWeapon === 'shotgun' ? 0.65 : 1),
+                    life: 45
                 });
             }
             lastShotTime = Date.now();
@@ -146,96 +174,82 @@
 
         function doMeleeAttack() {
             const now = Date.now();
-            if (now - lastMeleeTime < 380) return;
-
-            let hit = false;
-            for (let i = enemies.length - 1; i >= 0; i--) {
+            if (now - lastMeleeTime < 420) return;
+            let hitAny = false;
+            for (let i = enemies.length-1; i>=0; i--) {
                 const e = enemies[i];
-                const d = Math.hypot(e.x - player.x, e.y - player.y);
-                if (d < 55) { // melee range
-                    e.health = (e.health || 1) - (playerStats.damage * 2.2);
-                    createExplosion(e.x, e.y, 0.8);
+                if (Math.hypot(e.x - player.x, e.y - player.y) < 58) {
+                    e.health = (e.health || 1) - playerStats.damage * 2.5;
+                    createExplosion(e.x, e.y, 0.9);
                     if (e.health <= 0) {
-                        enemies.splice(i, 1);
+                        enemies.splice(i,1);
                         score += 12;
                         enemiesKilledThisWave++;
                     }
-                    hit = true;
+                    hitAny = true;
                 }
             }
-            if (hit) {
-                lastMeleeTime = now;
-                playShootSound();
-            }
+            if (hitAny) lastMeleeTime = now;
         }
 
         function update() {
             if (gameState !== 'playing') return;
 
-            // === Movement via Joystick ===
-            if (joystickActive && (Math.abs(joystickDir.x) > 0.1 || Math.abs(joystickDir.y) > 0.1)) {
+            // Joystick movement
+            if (joystickActive) {
                 player.x += joystickDir.x * playerStats.moveSpeed;
                 player.y += joystickDir.y * playerStats.moveSpeed;
             }
 
-            // Clamp
-            player.x = Math.max(25, Math.min(canvas.width - 25, player.x));
-            player.y = Math.max(25, Math.min(canvas.height - 25, player.y));
+            player.x = Math.max(25, Math.min(canvas.width-25, player.x));
+            player.y = Math.max(25, Math.min(canvas.height-25, player.y));
 
-            // === Auto Aim ===
             const nearest = findNearestEnemy();
             if (nearest) {
                 player.angle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
             }
 
-            // === Weapon behavior ===
             const now = Date.now();
             if (currentWeapon === 'melee') {
                 doMeleeAttack();
-            } else {
-                // Ranged weapons
-                if (nearest && now - lastShotTime > playerStats.fireCooldown) {
-                    shoot();
-                }
+            } else if (nearest && now - lastShotTime > playerStats.fireCooldown) {
+                shoot();
             }
 
-            // Update bullets
-            for (let i = bullets.length - 1; i >= 0; i--) {
+            // Bullets
+            for (let i=bullets.length-1; i>=0; i--) {
                 const b = bullets[i];
                 b.x += b.vx; b.y += b.vy; b.life--;
-                if (b.life <= 0 || b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
-                    bullets.splice(i, 1);
-                }
+                if (b.life <= 0 || b.x<0 || b.x>canvas.width || b.y<0 || b.y>canvas.height) bullets.splice(i,1);
             }
 
-            // Enemies movement & collision
-            for (let i = enemies.length - 1; i >= 0; i--) {
+            // Enemies
+            for (let i=enemies.length-1; i>=0; i--) {
                 const e = enemies[i];
-                const dx = player.x - e.x;
-                const dy = player.y - e.y;
+                const dx = player.x - e.x, dy = player.y - e.y;
                 const d = Math.hypot(dx, dy) || 1;
-                e.x += (dx / d) * e.speed;
-                e.y += (dy / d) * e.speed;
+                e.x += (dx/d) * e.speed;
+                e.y += (dy/d) * e.speed;
 
-                if (Math.hypot(e.x - player.x, e.y - player.y) < player.radius + e.radius + 5) {
-                    player.health -= 16;
+                if (Math.hypot(e.x-player.x, e.y-player.y) < player.radius + e.radius + 4) {
+                    player.health -= 15;
                     createExplosion(e.x, e.y);
-                    enemies.splice(i, 1);
+                    enemies.splice(i,1);
                     if (player.health <= 0) gameState = 'gameover';
                 }
             }
 
-            // Bullet hits
-            for (let bi = bullets.length - 1; bi >= 0; bi--) {
+            // Bullet collision
+            for (let bi=bullets.length-1; bi>=0; bi--) {
                 const b = bullets[bi];
-                for (let ei = enemies.length - 1; ei >= 0; ei--) {
+                for (let ei=enemies.length-1; ei>=0; ei--) {
                     const e = enemies[ei];
-                    if (Math.hypot(b.x - e.x, b.y - e.y) < 11) {
-                        e.health = (e.health || 1) - b.damage;
-                        createExplosion(e.x, e.y, 0.7);
-                        bullets.splice(bi, 1);
+                    if (Math.hypot(b.x-e.x, b.y-e.y) < 10) {
+                        e.health = (e.health||1) - b.damage;
+                        createExplosion(e.x, e.y, 0.6);
+                        bullets.splice(bi,1);
                         if (e.health <= 0) {
-                            enemies.splice(ei, 1);
+                            enemies.splice(ei,1);
                             score += 10;
                             enemiesKilledThisWave++;
                         }
@@ -245,37 +259,31 @@
             }
 
             // Particles
-            for (let i = particles.length - 1; i >= 0; i--) {
+            for (let i=particles.length-1; i>=0; i--) {
                 const p = particles[i];
                 p.x += p.vx; p.y += p.vy; p.life--;
-                if (p.life <= 0) particles.splice(i, 1);
+                if (p.life <= 0) particles.splice(i,1);
             }
 
             // Spawn
-            if (enemies.length < 14 && enemiesKilledThisWave < waveEnemyTarget && Date.now() - lastSpawnTime > 750) {
+            if (enemies.length < 13 && enemiesKilledThisWave < waveEnemyTarget && Date.now() - lastSpawnTime > 720) {
                 spawnEnemy();
                 lastSpawnTime = Date.now();
             }
 
-            // Wave clear check
             if (enemiesKilledThisWave >= waveEnemyTarget && enemies.length === 0) {
                 showUpgradeScreen();
             }
         }
 
         function spawnEnemy() {
-            const side = Math.floor(Math.random() * 4);
-            let x, y;
-            if (side === 0) { x = Math.random() * canvas.width; y = -25; }
-            else if (side === 1) { x = canvas.width + 25; y = Math.random() * canvas.height; }
-            else if (side === 2) { x = Math.random() * canvas.width; y = canvas.height + 25; }
-            else { x = -25; y = Math.random() * canvas.height; }
-
-            enemies.push({
-                x, y, radius: 13,
-                speed: 1.5 + currentWave * 0.1,
-                health: 1 + Math.floor(currentWave / 2)
-            });
+            const side = Math.floor(Math.random()*4);
+            let x,y;
+            if(side===0){x=Math.random()*canvas.width;y=-25;}
+            else if(side===1){x=canvas.width+25;y=Math.random()*canvas.height;}
+            else if(side===2){x=Math.random()*canvas.width;y=canvas.height+25;}
+            else{x=-25;y=Math.random()*canvas.height;}
+            enemies.push({x,y,radius:13,speed:1.55+currentWave*0.1,health:1+Math.floor(currentWave/2)});
         }
 
         function drawHero() {
@@ -283,138 +291,101 @@
             ctx.translate(player.x, player.y);
             ctx.rotate(player.angle);
 
-            // Refined small hero
-            // Shadow
-            ctx.fillStyle = 'rgba(0,0,0,0.3)';
-            ctx.beginPath(); ctx.ellipse(0, 8, 10, 5, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'rgba(0,0,0,0.25)';
+            ctx.beginPath(); ctx.ellipse(0,7,9,4.5,0,0,Math.PI*2); ctx.fill();
 
-            // Legs
             ctx.fillStyle = '#334155';
-            ctx.fillRect(-6, 2, 5, 12);
-            ctx.fillRect(1, 2, 5, 12);
+            ctx.fillRect(-5,1,4,11);
+            ctx.fillRect(1,1,4,11);
 
-            // Body (armor)
             ctx.fillStyle = '#166534';
-            ctx.fillRect(-7, -6, 14, 10);
+            ctx.fillRect(-6,-5,12,9);
 
-            // Head
             ctx.fillStyle = '#4ade80';
-            ctx.beginPath(); ctx.arc(0, -9, 6, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(0,-8,5.5,0,Math.PI*2); ctx.fill();
 
-            // Helmet detail
             ctx.fillStyle = '#22c55e';
-            ctx.beginPath(); ctx.arc(0, -10, 4, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(0,-9,3.5,0,Math.PI*2); ctx.fill();
 
-            // Weapon in hand (changes with currentWeapon)
-            ctx.strokeStyle = '#e2e8f0';
-            ctx.lineWidth = 3;
+            // Weapon
             if (currentWeapon === 'melee') {
-                // Sword
+                ctx.strokeStyle = '#e2e8f0';
+                ctx.lineWidth = 3.5;
                 ctx.beginPath();
-                ctx.moveTo(5, -2);
-                ctx.lineTo(18, -8);
+                ctx.moveTo(4,-1);
+                ctx.lineTo(17,-7);
                 ctx.stroke();
-                ctx.fillStyle = '#94a3b8';
-                ctx.fillRect(14, -10, 6, 4);
             } else {
-                // Gun
                 ctx.fillStyle = '#64748b';
-                ctx.fillRect(6, -3, 16, 5);
-                ctx.fillStyle = '#475569';
-                ctx.fillRect(18, -2, 6, 3);
+                ctx.fillRect(5,-2.5,15,5);
             }
-
             ctx.restore();
         }
 
         function draw() {
             ctx.fillStyle = '#0f172a';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0,0,canvas.width,canvas.height);
 
-            // Subtle grid (higher perspective feel)
             ctx.strokeStyle = '#1e2937';
             ctx.lineWidth = 1;
-            const gridSize = 50;
-            for (let x = 0; x < canvas.width; x += gridSize) {
-                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-            }
-            for (let y = 0; y < canvas.height; y += gridSize) {
-                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-            }
+            for(let x=0; x<canvas.width; x+=48){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
+            for(let y=0; y<canvas.height; y+=48){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
 
-            // Enemies (smaller & refined)
-            for (let e of enemies) {
+            for(let e of enemies){
                 ctx.fillStyle = '#ef4444';
-                ctx.beginPath(); ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2); ctx.fill();
-                ctx.fillStyle = '#7f1d1d';
-                ctx.beginPath(); ctx.arc(e.x, e.y, e.radius * 0.6, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(e.x,e.y,e.radius,0,Math.PI*2); ctx.fill();
             }
 
-            // Hero
             drawHero();
 
-            // Bullets
             ctx.fillStyle = '#facc15';
-            for (let b of bullets) {
-                ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI * 2); ctx.fill();
-            }
+            for(let b of bullets){ ctx.beginPath(); ctx.arc(b.x,b.y,4,0,Math.PI*2); ctx.fill(); }
 
-            // Particles
-            for (let p of particles) {
-                ctx.globalAlpha = Math.max(0.15, p.life / 30);
+            for(let p of particles){
+                ctx.globalAlpha = Math.max(0.2, p.life/28);
                 ctx.fillStyle = '#fb923c';
-                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill();
             }
             ctx.globalAlpha = 1;
 
-            // UI
             ctx.fillStyle = '#e0f2fe';
             ctx.font = 'bold 20px system-ui';
-            ctx.fillText(`HP ${Math.floor(player.health)}`, 20, 32);
-            ctx.fillText(`Wave ${currentWave}`, canvas.width - 100, 32);
-            ctx.fillText(`${currentWeapon.toUpperCase()} Lv.${weaponLevel}`, 20, 58);
-
-            // Joystick visual update
-            if (joystickActive) {
-                joystickKnob.style.left = `${50 + joystickDir.x * 25}px`;
-                joystickKnob.style.bottom = `${30 - joystickDir.y * 25}px`;
-            } else {
-                joystickKnob.style.left = '50%';
-                joystickKnob.style.bottom = '30px';
-            }
+            ctx.fillText('HP ' + Math.floor(player.health), 18, 30);
+            ctx.fillText('Wave ' + currentWave, canvas.width - 95, 30);
+            ctx.fillText(currentWeapon.toUpperCase() + ' Lv' + weaponLevel, 18, 55);
         }
 
         function gameLoop() {
-            if (gameState === 'playing') update();
+            if(gameState === 'playing') update();
             draw();
 
-            if (gameState === 'start') {
-                ctx.fillStyle = 'rgba(15,23,42,0.88)';
+            if(gameState === 'start'){
+                ctx.fillStyle = 'rgba(15,23,42,0.9)';
                 ctx.fillRect(0,0,canvas.width,canvas.height);
                 ctx.fillStyle = '#22c55e';
-                ctx.font = 'bold 38px system-ui';
+                ctx.font = 'bold 40px system-ui';
                 ctx.textAlign = 'center';
-                ctx.fillText('兵峰射击游戏', canvas.width/2, canvas.height * 0.32);
+                ctx.fillText('兵峰射击游戏', canvas.width/2, canvas.height*0.33);
                 ctx.font = '18px system-ui';
                 ctx.fillStyle = '#94a3b8';
-                ctx.fillText('虚拟摇杆移动 | 自动战斗', canvas.width/2, canvas.height * 0.42);
+                ctx.fillText('虚拟摇杆控制移动 | 自动战斗', canvas.width/2, canvas.height*0.43);
                 ctx.fillStyle = '#4ade80';
-                ctx.fillText('点击开始新一轮', canvas.width/2, canvas.height * 0.55);
+                ctx.fillText('点击屏幕开始', canvas.width/2, canvas.height*0.56);
                 ctx.textAlign = 'left';
             }
 
-            if (gameState === 'gameover') {
+            if(gameState === 'gameover'){
                 ctx.fillStyle = 'rgba(15,23,42,0.92)';
                 ctx.fillRect(0,0,canvas.width,canvas.height);
                 ctx.fillStyle = '#ef4444';
-                ctx.font = 'bold 42px system-ui';
+                ctx.font = 'bold 44px system-ui';
                 ctx.textAlign = 'center';
-                ctx.fillText('游戏结束', canvas.width/2, canvas.height * 0.32);
+                ctx.fillText('游戏结束', canvas.width/2, canvas.height*0.33);
                 ctx.fillStyle = '#e0f2fe';
                 ctx.font = '24px system-ui';
-                ctx.fillText(`最终得分 ${score}`, canvas.width/2, canvas.height * 0.45);
+                ctx.fillText('最终得分: ' + score, canvas.width/2, canvas.height*0.46);
                 ctx.fillStyle = '#94a3b8';
-                ctx.fillText('点击重新开始', canvas.width/2, canvas.height * 0.58);
+                ctx.fillText('点击屏幕重新开始', canvas.width/2, canvas.height*0.58);
             }
 
             requestAnimationFrame(gameLoop);
@@ -422,110 +393,121 @@
 
         function startNewRun() {
             player.x = canvas.width * 0.5;
-            player.y = canvas.height * 0.55;
+            player.y = canvas.height * 0.52;
             player.health = player.maxHealth;
             score = 0;
             currentWave = 1;
             enemiesKilledThisWave = 0;
             waveEnemyTarget = 10;
             bullets = []; enemies = []; particles = [];
-            lastShotTime = 0;
-            lastMeleeTime = 0;
+            lastShotTime = 0; lastMeleeTime = 0;
             currentWeapon = 'pistol';
             weaponLevel = 1;
             playerStats = { fireCooldown: 260, damage: 1, moveSpeed: 3.8, multiShot: 1 };
             gameState = 'playing';
             joystickActive = false;
-            joystickDir = { x: 0, y: 0 };
+            joystickDir = {x:0, y:0};
+            resetJoystickVisual();
         }
 
         function showUpgradeScreen() {
             gameState = 'upgrading';
             upgradeOptions.innerHTML = '';
 
-            const options = [
-                { name: '手枪 升级', desc: '射速上升 + 伤害', effect: () => { currentWeapon = 'pistol'; playerStats.fireCooldown *= 0.82; playerStats.damage += 0.8; weaponLevel++; } },
-                { name: '霰弹枪', desc: '改为广角散弹武器', effect: () => { currentWeapon = 'shotgun'; playerStats.multiShot = 3; weaponLevel = 1; } },
-                { name: '近战剑', desc: '改为近身战斗模式', effect: () => { currentWeapon = 'melee'; weaponLevel = 1; } },
-                { name: '增加移动速度', desc: '移动更快', effect: () => { playerStats.moveSpeed *= 1.18; } },
-                { name: '提升伤害', desc: '所有武器伤害+1', effect: () => { playerStats.damage += 1; } }
+            const opts = [
+                {n:'手枪升级', d:'射速上升 + 伤害', f:()=>{currentWeapon='pistol'; playerStats.fireCooldown*=0.8; playerStats.damage+=0.7; weaponLevel++;}},
+                {n:'霰弹枪', d:'切换为散弹武器', f:()=>{currentWeapon='shotgun'; weaponLevel=1;}},
+                {n:'近战剑', d:'切换为近身战斗', f:()=>{currentWeapon='melee'; weaponLevel=1;}},
+                {n:'移动加速', d:'移动速度提升', f:()=>{playerStats.moveSpeed *= 1.2;}},
+                {n:'提升伤害', d:'全体伤害 +1', f:()=>{playerStats.damage += 1;}}
             ];
+            const chosen = opts.sort(()=>Math.random()-0.5).slice(0,3);
 
-            const chosen = options.sort(() => Math.random() - 0.5).slice(0, 3);
-
-            chosen.forEach(opt => {
-                const btn = document.createElement('div');
-                btn.className = 'upgrade-btn';
-                btn.innerHTML = `<strong>${opt.name}</strong><br><small>${opt.desc}</small>`;
-                btn.onclick = () => {
-                    opt.effect();
-                    upgradeOverlay.style.display = 'none';
+            chosen.forEach(o => {
+                const b = document.createElement('div');
+                b.className = 'upgrade-btn';
+                b.innerHTML = `<strong>${o.n}</strong><br><small>${o.d}</small>`;
+                b.onclick = () => {
+                    o.f();
+                    upgradeOverlay.style.display='none';
                     currentWave++;
-                    enemiesKilledThisWave = 0;
-                    waveEnemyTarget = 10 + currentWave * 4;
+                    enemiesKilledThisWave=0;
+                    waveEnemyTarget = 10 + currentWave*4;
                     gameState = 'playing';
                 };
-                upgradeOptions.appendChild(btn);
+                upgradeOptions.appendChild(b);
             });
-
             upgradeOverlay.style.display = 'flex';
         }
 
-        // Virtual Joystick Logic
-        function updateJoystick(x, y) {
+        function updateJoystickVisual(dx, dy) {
+            const maxMove = 32;
+            joystickKnob.style.left = `calc(50% + ${dx * maxMove}px)`;
+            joystickKnob.style.bottom = `calc(55px - ${dy * maxMove}px)`;
+        }
+
+        function resetJoystickVisual() {
+            joystickKnob.style.left = '50%';
+            joystickKnob.style.bottom = '55px';
+        }
+
+        function updateJoystickFromTouch(clientX, clientY) {
             const rect = joystickBase.getBoundingClientRect();
-            const centerX = rect.left + rect.width / 2;
-            const centerY = rect.top + rect.height / 2;
+            const cx = rect.left + rect.width/2;
+            const cy = rect.top + rect.height/2;
 
-            let dx = x - centerX;
-            let dy = y - centerY;
-            const maxDist = 45;
+            let dx = clientX - cx;
+            let dy = clientY - cy;
             const dist = Math.hypot(dx, dy);
+            const max = 48;
 
-            if (dist > maxDist) {
-                dx = (dx / dist) * maxDist;
-                dy = (dy / dist) * maxDist;
+            if (dist > max) {
+                dx = dx / dist * max;
+                dy = dy / dist * max;
             }
 
-            joystickDir.x = dx / maxDist;
-            joystickDir.y = dy / maxDist;
+            joystickDir.x = dx / max;
+            joystickDir.y = dy / max;
 
-            joystickKnob.style.left = `${50 + (dx / maxDist) * 28}px`;
-            joystickKnob.style.bottom = `${30 - (dy / maxDist) * 28}px`;
+            updateJoystickVisual(joystickDir.x, joystickDir.y);
         }
 
         function resetJoystick() {
             joystickActive = false;
-            joystickDir = { x: 0, y: 0 };
-            joystickKnob.style.left = '50%';
-            joystickKnob.style.bottom = '30px';
+            joystickDir = {x:0, y:0};
+            resetJoystickVisual();
         }
 
-        // Touch handling for joystick + game
+        // === Touch Handling (Fixed) ===
         function handleTouchStart(e) {
             e.preventDefault();
             const touch = e.touches[0];
-            const rect = joystickBase.getBoundingClientRect();
 
-            if (touch.clientX > rect.left - 30 && touch.clientX < rect.right + 30 &&
-                touch.clientY > rect.top - 30 && touch.clientY < rect.bottom + 30) {
-                // Joystick area
+            // Priority: Start or Game Over screen
+            if (gameState === 'start' || gameState === 'gameover') {
+                startNewRun();
+                return;
+            }
+
+            // Joystick area check
+            const rect = joystickBase.getBoundingClientRect();
+            const inJoystick = (touch.clientX > rect.left - 25 && touch.clientX < rect.right + 25 &&
+                              touch.clientY > rect.top - 25 && touch.clientY < rect.bottom + 25);
+
+            if (inJoystick) {
                 joystickActive = true;
                 joystickTouchId = touch.identifier;
-                updateJoystick(touch.clientX, touch.clientY);
-            } else {
-                // Game area tap
-                if (gameState === 'start' || gameState === 'gameover') {
-                    startNewRun();
-                }
+                updateJoystickFromTouch(touch.clientX, touch.clientY);
             }
         }
 
         function handleTouchMove(e) {
             e.preventDefault();
-            for (let touch of e.touches) {
-                if (touch.identifier === joystickTouchId && joystickActive) {
-                    updateJoystick(touch.clientX, touch.clientY);
+            if (!joystickActive) return;
+
+            for (let t of e.touches) {
+                if (t.identifier === joystickTouchId) {
+                    updateJoystickFromTouch(t.clientX, t.clientY);
                     break;
                 }
             }
@@ -533,8 +515,8 @@
 
         function handleTouchEnd(e) {
             e.preventDefault();
-            for (let touch of e.changedTouches) {
-                if (touch.identifier === joystickTouchId) {
+            for (let t of e.changedTouches) {
+                if (t.identifier === joystickTouchId) {
                     resetJoystick();
                     joystickTouchId = null;
                     break;
@@ -542,17 +524,16 @@
             }
         }
 
-        canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
-        canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
-        canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
+        canvas.addEventListener('touchstart', handleTouchStart, {passive:false});
+        canvas.addEventListener('touchmove', handleTouchMove, {passive:false});
+        canvas.addEventListener('touchend', handleTouchEnd, {passive:false});
 
-        // Mouse support for testing
-        let mouseDown = false;
+        // Mouse fallback
         canvas.addEventListener('mousedown', (e) => {
-            if (gameState === 'start' || gameState === 'gameover') startNewRun();
-            mouseDown = true;
+            if (gameState === 'start' || gameState === 'gameover') {
+                startNewRun();
+            }
         });
-        canvas.addEventListener('mouseup', () => mouseDown = false);
 
         canvas.addEventListener('contextmenu', e => e.preventDefault());
 
