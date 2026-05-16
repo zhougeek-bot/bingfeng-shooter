@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>兵峰射击游戏 | Bingfeng Shooter</title>
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #e0f2fe;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            color: #22c55e;
+            margin-bottom: 10px;
+        }
+        #game {
+            border: 3px solid #22c55e;
+            border-radius: 8px;
+            background-color: #0a0f0a;
+            box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
+            cursor: crosshair;
+        }
+        .info {
+            margin-top: 15px;
+            text-align: center;
+            color: #94a3b8;
+            font-size: 14px;
+        }
+        button {
+            background-color: #22c55e;
+            color: #0f172a;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #4ade80;
+        }
+    </style>
+</head>
+<body>
+    <h1>兵峰射击游戏</h1>
+    <canvas id="game" width="800" height="600"></canvas>
+    <div class="info">
+        WASD / 方向键 移动 | 鼠标移动瞄准 + 点击射击<br>
+        消灭敌人获得分数 | 避免被敌人接近
+    </div>
+
+    <script>
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d', { alpha: true });
+
+        let gameState = 'start'; // 'start', 'playing', 'gameover'
+        let score = 0;
+        let playerHealth = 100;
+        let player = { x: 400, y: 300, radius: 18, speed: 5, angle: 0 };
+        let bullets = [];
+        let enemies = [];
+        let particles = [];
+        let keys = {};
+        let mouse = { x: 400, y: 300, down: false };
+        let lastShotTime = 0;
+        const shootCooldown = 160;
+        let lastSpawnTime = 0;
+        let spawnInterval = 1100;
+        const enemySpeedBase = 1.7;
+        let audioCtx = null;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        function playShootSound() {
+            initAudio();
+            try {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                const filter = audioCtx.createBiquadFilter();
+                osc.type = 'sawtooth';
+                osc.frequency.value = 720;
+                filter.type = 'lowpass';
+                filter.frequency.value = 1200;
+                gain.gain.value = 0.25;
+                osc.connect(filter);
+                filter.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                gain.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.18);
+                setTimeout(() => { osc.stop(); }, 200);
+            } catch(e) {}
+        }
+
+        function playHitSound() {
+            initAudio();
+            try {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = 220;
+                gain.gain.value = 0.4;
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                gain.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+                setTimeout(() => { osc.stop(); }, 300);
+            } catch(e) {}
+        }
+
+        function shoot() {
+            const angle = player.angle;
+            const bx = player.x + Math.cos(angle) * (player.radius + 8);
+            const by = player.y + Math.sin(angle) * (player.radius + 8);
+            const bSpeed = 9.5;
+            bullets.push({
+                x: bx, y: by,
+                vx: Math.cos(angle) * bSpeed,
+                vy: Math.sin(angle) * bSpeed,
+                radius: 5
+            });
+            playShootSound();
+        }
+
+        function spawnEnemy() {
+            const radius = 14;
+            let x, y;
+            const side = Math.floor(Math.random() * 4);
+            const margin = 35;
+            if (side === 0) { // top
+                x = Math.random() * 800;
+                y = -margin;
+            } else if (side === 1) { // right
+                x = 800 + margin;
+                y = Math.random() * 600;
+            } else if (side === 2) { // bottom
+                x = Math.random() * 800;
+                y = 600 + margin;
+            } else { // left
+                x = -margin;
+                y = Math.random() * 600;
+            }
+            // avoid spawning too close to player
+            const distToPlayer = Math.hypot(x - player.x, y - player.y);
+            if (distToPlayer < 120) {
+                // adjust position slightly
+                x = (x + player.x) / 2 + (Math.random() - 0.5) * 80;
+                y = (y + player.y) / 2 + (Math.random() - 0.5) * 80;
+            }
+            enemies.push({
+                x: x,
+                y: y,
+                radius: radius,
+                speed: enemySpeedBase + Math.random() * 0.9
+            });
+        }
+
+        function createExplosion(x, y) {
+            for (let i = 0; i < 14; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1.2 + Math.random() * 3.5;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    life: 18 + Math.random() * 22,
+                    size: 2.5 + Math.random() * 3.5
+                });
+            }
+        }
+
+        function updateGame() {
+            // Player movement
+            let dx = 0, dy = 0;
+            if (keys['w'] || keys['arrowup']) dy -= 1;
+            if (keys['s'] || keys['arrowdown']) dy += 1;
+            if (keys['a'] || keys['arrowleft']) dx -= 1;
+            if (keys['d'] || keys['arrowright']) dx += 1;
+
+            if (dx !== 0 || dy !== 0) {
+                const len = Math.sqrt(dx * dx + dy * dy);
+                player.x += (dx / len) * player.speed;
+                player.y += (dy / len) * player.speed;
+            }
+
+            // Clamp to bounds
+            player.x = Math.max(player.radius, Math.min(800 - player.radius, player.x));
+            player.y = Math.max(player.radius, Math.min(600 - player.radius, player.y));
+
+            // Update aim angle
+            player.angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
+
+            // Shooting while mouse held
+            const now = Date.now();
+            if (mouse.down && now - lastShotTime > shootCooldown) {
+                shoot();
+                lastShotTime = now;
+            }
+
+            // Update bullets
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const b = bullets[i];
+                b.x += b.vx;
+                b.y += b.vy;
+                if (b.x < 0 || b.x > 800 || b.y < 0 || b.y > 600) {
+                    bullets.splice(i, 1);
+                }
+            }
+
+            // Update enemies and check collisions
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const e = enemies[i];
+                const dxE = player.x - e.x;
+                const dyE = player.y - e.y;
+                const distE = Math.hypot(dxE, dyE) || 1;
+                e.x += (dxE / distE) * e.speed;
+                e.y += (dyE / distE) * e.speed;
+
+                // Enemy hits player
+                const pDist = Math.hypot(e.x - player.x, e.y - player.y);
+                if (pDist < player.radius + e.radius + 2) {
+                    playerHealth -= 22;
+                    createExplosion(e.x, e.y);
+                    playHitSound();
+                    enemies.splice(i, 1);
+                    if (playerHealth <= 0) {
+                        gameState = 'gameover';
+                        return;
+                    }
+                    continue;
+                }
+            }
+
+            // Bullet vs Enemy collisions
+            for (let bi = bullets.length - 1; bi >= 0; bi--) {
+                const b = bullets[bi];
+                for (let ei = enemies.length - 1; ei >= 0; ei--) {
+                    const e = enemies[ei];
+                    const dist = Math.hypot(b.x - e.x, b.y - e.y);
+                    if (dist < b.radius + e.radius + 3) {
+                        createExplosion(e.x, e.y);
+                        playHitSound();
+                        bullets.splice(bi, 1);
+                        enemies.splice(ei, 1);
+                        score += 10;
+                        // Increase difficulty
+                        if (score % 60 === 0 && spawnInterval > 450) {
+                            spawnInterval -= 80;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Update particles
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 1;
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                }
+            }
+
+            // Spawn new enemies
+            if (now - lastSpawnTime > spawnInterval) {
+                spawnEnemy();
+                lastSpawnTime = now;
+                // Occasionally spawn an extra one for challenge
+                if (Math.random() < 0.35 && enemies.length < 12) {
+                    setTimeout(() => { if (gameState === 'playing') spawnEnemy(); }, 180);
+                }
+            }
+        }
+
+        function drawBackground() {
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, 800, 600);
+
+            // Subtle grid
+            ctx.strokeStyle = '#1e2937';
+            ctx.lineWidth = 1;
+            for (let x = 40; x < 800; x += 40) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, 600);
+                ctx.stroke();
+            }
+            for (let y = 40; y < 600; y += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(800, y);
+                ctx.stroke();
+            }
+        }
+
+        function drawGame() {
+            drawBackground();
+
+            // Draw bullets
+            ctx.fillStyle = '#eab308';
+            for (let b of bullets) {
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+                ctx.fill();
+                // Simple trail
+                ctx.fillStyle = '#fef08c';
+                ctx.beginPath();
+                ctx.arc(b.x - b.vx * 0.4, b.y - b.vy * 0.4, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#eab308';
+            }
+
+            // Draw enemies
+            for (let e of enemies) {
+                ctx.fillStyle = '#dc2626';
+                ctx.beginPath();
+                ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#7f1d1d';
+                ctx.beginPath();
+                ctx.arc(e.x, e.y, e.radius * 0.55, 0, Math.PI * 2);
+                ctx.fill();
+                // Highlight
+                ctx.fillStyle = '#fca5a5';
+                ctx.beginPath();
+                ctx.arc(e.x - 4, e.y - 4, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Draw player (soldier/tank style)
+            ctx.save();
+            ctx.translate(player.x, player.y);
+            ctx.rotate(player.angle);
+
+            // Body
+            ctx.fillStyle = '#22c55e';
+            ctx.beginPath();
+            ctx.arc(0, 0, player.radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Barrel
+            ctx.fillStyle = '#166534';
+            ctx.fillRect(player.radius - 3, -5, 28, 10);
+
+            // Head detail
+            ctx.fillStyle = '#4ade80';
+            ctx.beginPath();
+            ctx.arc(6, 0, 9, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+
+            // Particles (explosions)
+            for (let p of particles) {
+                ctx.globalAlpha = Math.max(0.1, p.life / 35);
+                ctx.fillStyle = '#f97316';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1.0;
+
+            // UI - Score
+            ctx.fillStyle = '#e0f2fe';
+            ctx.font = 'bold 26px Segoe UI, Arial';
+            ctx.fillText('得分: ' + score, 25, 42);
+
+            // Health bar
+            ctx.fillStyle = '#334155';
+            ctx.fillRect(25, 55, 220, 22);
+            const hpPercent = Math.max(0, playerHealth / 100);
+            ctx.fillStyle = (hpPercent > 0.5) ? '#22c55e' : (hpPercent > 0.25 ? '#eab308' : '#ef4444');
+            ctx.fillRect(25, 55, 220 * hpPercent, 22);
+            ctx.strokeStyle = '#64748b';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(25, 55, 220, 22);
+            ctx.fillStyle = '#e0f2fe';
+            ctx.font = '14px Arial';
+            ctx.fillText('生命值', 255, 72);
+
+            // Hint
+            ctx.fillStyle = '#64748b';
+            ctx.font = '13px Arial';
+            ctx.fillText('WASD 移动 | 鼠标瞄准并点击射击', 25, 585);
+        }
+
+        function drawStartScreen() {
+            drawBackground();
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+            ctx.fillRect(0, 0, 800, 600);
+
+            ctx.fillStyle = '#22c55e';
+            ctx.font = 'bold 52px Segoe UI, Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('兵峰射击游戏', 400, 200);
+
+            ctx.font = '22px Arial';
+            ctx.fillStyle = '#bae6fd';
+            ctx.fillText('Bingfeng Shooter', 400, 245);
+
+            ctx.font = '18px Arial';
+            ctx.fillStyle = '#cbd5e1';
+            ctx.fillText('WASD / 方向键 移动士兵', 400, 310);
+            ctx.fillText('鼠标移动瞄准，点击射击消灭敌人', 400, 340);
+            ctx.fillText('避免被敌人接近造成伤害', 400, 370);
+
+            ctx.font = 'bold 20px Arial';
+            ctx.fillStyle = '#4ade80';
+            ctx.fillText('点击画布开始游戏', 400, 440);
+
+            ctx.textAlign = 'left';
+        }
+
+        function drawGameOverScreen() {
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+            ctx.fillRect(0, 0, 800, 600);
+
+            ctx.fillStyle = '#ef4444';
+            ctx.font = 'bold 46px Segoe UI, Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('游戏结束', 400, 180);
+
+            ctx.fillStyle = '#e0f2fe';
+            ctx.font = '28px Arial';
+            ctx.fillText('最终得分: ' + score, 400, 250);
+
+            ctx.font = '20px Arial';
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillText('点击画布重新开始', 400, 320);
+
+            ctx.textAlign = 'left';
+        }
+
+        function gameLoop() {
+            if (gameState === 'playing') {
+                updateGame();
+            }
+
+            if (gameState === 'start') {
+                drawStartScreen();
+            } else if (gameState === 'playing') {
+                drawGame();
+            } else if (gameState === 'gameover') {
+                drawGameOverScreen();
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function resetGame() {
+            player.x = 400;
+            player.y = 300;
+            playerHealth = 100;
+            score = 0;
+            bullets = [];
+            enemies = [];
+            particles = [];
+            spawnInterval = 1100;
+            lastShotTime = 0;
+            mouse.down = false;
+            keys = {};
+        }
+
+        function startGame() {
+            resetGame();
+            gameState = 'playing';
+            lastSpawnTime = Date.now();
+            // Spawn a couple initial enemies
+            setTimeout(() => { if (gameState === 'playing') spawnEnemy(); }, 300);
+            setTimeout(() => { if (gameState === 'playing') spawnEnemy(); }, 600);
+        }
+
+        // Keyboard controls
+        window.addEventListener('keydown', (e) => {
+            keys[e.key.toLowerCase()] = true;
+            if ((e.key === ' ' || e.key.toLowerCase() === 'k') && gameState === 'playing') {
+                const now = Date.now();
+                if (now - lastShotTime > shootCooldown) {
+                    shoot();
+                    lastShotTime = now;
+                }
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+        });
+
+        // Mouse controls
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mouse.x = e.clientX - rect.left;
+            mouse.y = e.clientY - rect.top;
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            mouse.down = true;
+            if (gameState === 'start') {
+                startGame();
+            } else if (gameState === 'gameover') {
+                resetGame();
+                gameState = 'playing';
+                lastSpawnTime = Date.now();
+            } else if (gameState === 'playing') {
+                const now = Date.now();
+                if (now - lastShotTime > shootCooldown) {
+                    shoot();
+                    lastShotTime = now;
+                }
+            }
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            mouse.down = false;
+        });
+
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        // Start the game loop
+        gameLoop();
+
+        // Optional: Click anywhere on body to focus canvas
+        document.body.addEventListener('click', () => {
+            canvas.focus();
+        });
+    </script>
+</body>
+</html>
