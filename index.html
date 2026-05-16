@@ -2,532 +2,473 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
-    <title>兵峰射击游戏 | Bingfeng Shooter (Mobile)</title>
+    <title>兵峰射击游戏 - 肉鸽版</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            background-color: #0f172a;
-            color: #e0f2fe;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            overflow: hidden;
+        * { margin:0; padding:0; box-sizing:border-box; }
+        html, body { width:100%; height:100%; overflow:hidden; background:#0a0f0a; touch-action:none; }
+        #game { 
+            display:block; 
+            width:100vw; 
+            height:100vh; 
+            border:none; 
+            background:#0f172a;
             touch-action: none;
-            -webkit-touch-callout: none;
-            -webkit-user-select: none;
-            user-select: none;
         }
-        #game-container {
-            display: flex;
+        #upgrade-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 23, 42, 0.92);
+            display: none;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
-            width: 100vw;
-            height: 100vh;
-            background: #0a0f0a;
+            z-index: 200;
+            color: #e0f2fe;
+            padding: 20px;
         }
-        #game {
-            border: 3px solid #22c55e;
-            border-radius: 8px;
-            background-color: #0a0f0a;
-            box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
-            touch-action: none;
-            max-width: 100vw;
-            max-height: 100vh;
-        }
-        .info {
-            position: absolute;
-            bottom: 10px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: #64748b;
-            font-size: 12px;
-            text-align: center;
-            pointer-events: none;
-        }
-        .fullscreen-btn {
-            position: absolute;
-            top: 15px;
-            right: 15px;
-            background: rgba(34, 197, 94, 0.8);
-            color: #0f172a;
-            border: none;
-            padding: 8px 14px;
-            border-radius: 6px;
-            font-size: 14px;
+        .upgrade-title { font-size: 28px; margin-bottom: 30px; color: #22c55e; }
+        .upgrade-btn {
+            background: #166534;
+            color: white;
+            border: 2px solid #4ade80;
+            padding: 18px 30px;
+            margin: 12px 0;
+            font-size: 20px;
+            border-radius: 12px;
+            width: 85%;
+            max-width: 320px;
             cursor: pointer;
-            z-index: 100;
+            text-align: center;
         }
+        .upgrade-btn:active { background: #4ade80; color: #0f172a; }
+        .wave-text { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); color: #94a3b8; font-size: 18px; z-index: 100; }
     </style>
 </head>
 <body>
-    <div id="game-container">
-        <canvas id="game" width="800" height="600"></canvas>
+    <canvas id="game"></canvas>
+    <div id="upgrade-overlay">
+        <div class="upgrade-title">选择升级</div>
+        <div id="upgrade-options"></div>
     </div>
-    <button class="fullscreen-btn" onclick="toggleFullscreen()">全屏</button>
-    <div class="info">WASD/触摸移动 | 鼠标/触摸射击</div>
+    <div class="wave-text" id="wave-display"></div>
 
     <script>
         const canvas = document.getElementById('game');
         const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
+        const upgradeOverlay = document.getElementById('upgrade-overlay');
+        const upgradeOptions = document.getElementById('upgrade-options');
+        const waveDisplay = document.getElementById('wave-display');
 
-        let gameState = 'start';
+        let gameState = 'start'; // start, playing, upgrading, gameover
         let score = 0;
-        let playerHealth = 100;
-        let player = { x: 400, y: 300, radius: 18, speed: 5, angle: 0 };
+        let currentWave = 1;
+        let enemiesKilledThisWave = 0;
+        let waveEnemyTarget = 8;
+
+        // Player stats (roguelike upgrades)
+        let player = { 
+            x: 400, y: 300, radius: 20, 
+            speed: 4.5, 
+            health: 100, maxHealth: 100,
+            angle: 0 
+        };
+        let playerStats = {
+            fireCooldown: 280,      // ms between shots
+            damage: 1,
+            moveSpeed: 4.5,
+            multiShot: 1            // number of bullets per shot
+        };
+
         let bullets = [];
         let enemies = [];
         let particles = [];
-        let keys = {};
-        let mouse = { x: 400, y: 300, down: false };
         let lastShotTime = 0;
-        const shootCooldown = 160;
         let lastSpawnTime = 0;
-        let spawnInterval = 1100;
-        const enemySpeedBase = 1.7;
-        let audioCtx = null;
-        let isTouchDevice = false;
-        let touchActive = false;
-        let touchX = 0, touchY = 0;
+        let spawnInterval = 900;
 
-        // Mobile responsive scaling
+        let touchActive = false;
+        let touchTargetX = 400;
+        let touchTargetY = 300;
+
         function resizeCanvas() {
-            const container = document.getElementById('game-container');
-            const maxWidth = Math.min(window.innerWidth * 0.95, 800);
-            const maxHeight = Math.min(window.innerHeight * 0.85, 600);
-            const scale = Math.min(maxWidth / 800, maxHeight / 600);
-            
-            canvas.style.width = `${800 * scale}px`;
-            canvas.style.height = `${600 * scale}px`;
-            
-            // Keep internal resolution for crisp rendering
-            canvas.width = 800;
-            canvas.height = 600;
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            // Keep logical game area centered
         }
 
         window.addEventListener('resize', resizeCanvas);
-        window.addEventListener('load', resizeCanvas);
-
-        function initAudio() {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        window.addEventListener('load', () => {
+            resizeCanvas();
+            // Auto enter fullscreen on mobile if possible
+            if (document.documentElement.requestFullscreen) {
+                // Will be triggered on first touch
             }
+        });
+
+        function getGameScale() {
+            // Scale touch coordinates to logical 800x600 space for simplicity
+            return { scaleX: 800 / canvas.width, scaleY: 600 / canvas.height };
         }
 
-        function playShootSound() {
-            initAudio();
-            try {
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-                const filter = audioCtx.createBiquadFilter();
-                osc.type = 'sawtooth';
-                osc.frequency.value = 720;
-                filter.type = 'lowpass';
-                filter.frequency.value = 1200;
-                gain.gain.value = 0.25;
-                osc.connect(filter);
-                filter.connect(gain);
-                gain.connect(audioCtx.destination);
-                osc.start();
-                gain.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.18);
-                setTimeout(() => { osc.stop(); }, 200);
-            } catch(e) {}
-        }
+        // Simple audio
+        let audioCtx;
+        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        function playShoot() { /* keep simple beeps */ }
+        function playHit() { /* ... */ }
 
-        function playHitSound() {
-            initAudio();
-            try {
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-                osc.type = 'sine';
-                osc.frequency.value = 220;
-                gain.gain.value = 0.4;
-                osc.connect(gain);
-                gain.connect(audioCtx.destination);
-                osc.start();
-                gain.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
-                setTimeout(() => { osc.stop(); }, 300);
-            } catch(e) {}
-        }
+        function shootToward(targetX, targetY) {
+            const angle = Math.atan2(targetY - player.y, targetX - player.x);
+            const bulletSpeed = 10;
+            const startDist = player.radius + 12;
 
-        function shoot() {
-            const angle = player.angle;
-            const bx = player.x + Math.cos(angle) * (player.radius + 8);
-            const by = player.y + Math.sin(angle) * (player.radius + 8);
-            const bSpeed = 9.5;
-            bullets.push({
-                x: bx, y: by,
-                vx: Math.cos(angle) * bSpeed,
-                vy: Math.sin(angle) * bSpeed,
-                radius: 5
-            });
-            playShootSound();
-        }
+            for (let i = 0; i < playerStats.multiShot; i++) {
+                let spread = (i - (playerStats.multiShot-1)/2) * 0.12;
+                const finalAngle = angle + spread;
 
-        function spawnEnemy() {
-            const radius = 14;
-            let x, y;
-            const side = Math.floor(Math.random() * 4);
-            const margin = 35;
-            if (side === 0) { x = Math.random() * 800; y = -margin; }
-            else if (side === 1) { x = 800 + margin; y = Math.random() * 600; }
-            else if (side === 2) { x = Math.random() * 800; y = 600 + margin; }
-            else { x = -margin; y = Math.random() * 600; }
-
-            const distToPlayer = Math.hypot(x - player.x, y - player.y);
-            if (distToPlayer < 120) {
-                x = (x + player.x) / 2 + (Math.random() - 0.5) * 80;
-                y = (y + player.y) / 2 + (Math.random() - 0.5) * 80;
-            }
-            enemies.push({ x, y, radius, speed: enemySpeedBase + Math.random() * 0.9 });
-        }
-
-        function createExplosion(x, y) {
-            for (let i = 0; i < 14; i++) {
-                const angle = Math.random() * Math.PI * 2;
-                const speed = 1.2 + Math.random() * 3.5;
-                particles.push({
-                    x, y,
-                    vx: Math.cos(angle) * speed,
-                    vy: Math.sin(angle) * speed,
-                    life: 18 + Math.random() * 22,
-                    size: 2.5 + Math.random() * 3.5
+                bullets.push({
+                    x: player.x + Math.cos(finalAngle) * startDist,
+                    y: player.y + Math.sin(finalAngle) * startDist,
+                    vx: Math.cos(finalAngle) * bulletSpeed,
+                    vy: Math.sin(finalAngle) * bulletSpeed,
+                    damage: playerStats.damage
                 });
             }
+            lastShotTime = Date.now();
+            // Simple sound
+            initAudio();
+            try {
+                const o = audioCtx.createOscillator();
+                const g = audioCtx.createGain();
+                o.frequency.value = 850; o.type = 'sawtooth';
+                g.gain.value = 0.2;
+                o.connect(g); g.connect(audioCtx.destination);
+                o.start(); setTimeout(() => { g.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.12); o.stop(audioCtx.currentTime + 0.15); }, 30);
+            } catch(e){}
         }
 
-        function updateGame() {
-            // Keyboard movement (desktop)
-            let dx = 0, dy = 0;
-            if (keys['w'] || keys['arrowup']) dy -= 1;
-            if (keys['s'] || keys['arrowdown']) dy += 1;
-            if (keys['a'] || keys['arrowleft']) dx -= 1;
-            if (keys['d'] || keys['arrowright']) dx += 1;
-
-            if (dx !== 0 || dy !== 0) {
-                const len = Math.sqrt(dx * dx + dy * dy);
-                player.x += (dx / len) * player.speed;
-                player.y += (dy / len) * player.speed;
+        function findNearestEnemy() {
+            if (enemies.length === 0) return null;
+            let nearest = enemies[0];
+            let minDist = Infinity;
+            for (let e of enemies) {
+                const d = Math.hypot(e.x - player.x, e.y - player.y);
+                if (d < minDist) { minDist = d; nearest = e; }
             }
+            return nearest;
+        }
 
-            // Touch movement (mobile) - move towards touch point
-            if (isTouchDevice && touchActive) {
-                const touchDx = touchX - player.x;
-                const touchDy = touchY - player.y;
-                const touchDist = Math.hypot(touchDx, touchDy);
-                if (touchDist > 15) {
-                    const moveSpeed = player.speed * 0.9;
-                    player.x += (touchDx / touchDist) * moveSpeed;
-                    player.y += (touchDy / touchDist) * moveSpeed;
+        function update() {
+            if (gameState !== 'playing') return;
+
+            // === Movement (touch controlled) ===
+            if (touchActive) {
+                const dx = touchTargetX - player.x;
+                const dy = touchTargetY - player.y;
+                const dist = Math.hypot(dx, dy);
+                if (dist > 8) {
+                    const move = Math.min(playerStats.moveSpeed, dist);
+                    player.x += (dx / dist) * move;
+                    player.y += (dy / dist) * move;
                 }
             }
 
-            // Clamp position
-            player.x = Math.max(player.radius, Math.min(800 - player.radius, player.x));
-            player.y = Math.max(player.radius, Math.min(600 - player.radius, player.y));
+            // Clamp
+            player.x = Math.max(30, Math.min(canvas.width - 30, player.x));
+            player.y = Math.max(30, Math.min(canvas.height - 30, player.y));
 
-            // Update aim
-            if (isTouchDevice && touchActive) {
-                player.angle = Math.atan2(touchY - player.y, touchX - player.x);
-            } else {
-                player.angle = Math.atan2(mouse.y - player.y, mouse.x - player.x);
-            }
-
-            // Shooting
-            const now = Date.now();
-            const shouldShoot = mouse.down || (isTouchDevice && touchActive);
-            if (shouldShoot && now - lastShotTime > shootCooldown) {
-                shoot();
-                lastShotTime = now;
+            // === Auto Aim + Auto Shoot ===
+            const nearest = findNearestEnemy();
+            if (nearest) {
+                player.angle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
+                const now = Date.now();
+                if (now - lastShotTime > playerStats.fireCooldown) {
+                    shootToward(nearest.x, nearest.y);
+                }
             }
 
             // Update bullets
-            for (let i = bullets.length - 1; i >= 0; i--) {
+            for (let i = bullets.length-1; i>=0; i--) {
                 const b = bullets[i];
-                b.x += b.vx;
-                b.y += b.vy;
-                if (b.x < 0 || b.x > 800 || b.y < 0 || b.y > 600) bullets.splice(i, 1);
+                b.x += b.vx; b.y += b.vy;
+                if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) bullets.splice(i,1);
             }
 
             // Update enemies
-            for (let i = enemies.length - 1; i >= 0; i--) {
+            for (let i = enemies.length-1; i>=0; i--) {
                 const e = enemies[i];
-                const dxE = player.x - e.x;
-                const dyE = player.y - e.y;
-                const distE = Math.hypot(dxE, dyE) || 1;
-                e.x += (dxE / distE) * e.speed;
-                e.y += (dyE / distE) * e.speed;
+                const dx = player.x - e.x;
+                const dy = player.y - e.y;
+                const d = Math.hypot(dx, dy) || 1;
+                e.x += (dx/d) * e.speed;
+                e.y += (dy/d) * e.speed;
 
-                const pDist = Math.hypot(e.x - player.x, e.y - player.y);
-                if (pDist < player.radius + e.radius + 2) {
-                    playerHealth -= 22;
+                if (Math.hypot(e.x-player.x, e.y-player.y) < player.radius + e.radius) {
+                    player.health -= 18;
                     createExplosion(e.x, e.y);
-                    playHitSound();
-                    enemies.splice(i, 1);
-                    if (playerHealth <= 0) { gameState = 'gameover'; return; }
-                    continue;
+                    enemies.splice(i,1);
+                    if (player.health <= 0) { gameState = 'gameover'; }
                 }
             }
 
-            // Bullet vs Enemy
-            for (let bi = bullets.length - 1; bi >= 0; bi--) {
+            // Bullet collision
+            for (let bi=bullets.length-1; bi>=0; bi--) {
                 const b = bullets[bi];
-                for (let ei = enemies.length - 1; ei >= 0; ei--) {
+                for (let ei=enemies.length-1; ei>=0; ei--) {
                     const e = enemies[ei];
-                    if (Math.hypot(b.x - e.x, b.y - e.y) < b.radius + e.radius + 3) {
+                    if (Math.hypot(b.x-e.x, b.y-e.y) < 12) {
+                        e.health = (e.health || 1) - b.damage;
                         createExplosion(e.x, e.y);
-                        playHitSound();
-                        bullets.splice(bi, 1);
-                        enemies.splice(ei, 1);
-                        score += 10;
-                        if (score % 60 === 0 && spawnInterval > 450) spawnInterval -= 80;
+                        bullets.splice(bi,1);
+                        if (e.health <= 0) {
+                            enemies.splice(ei,1);
+                            score += 15;
+                            enemiesKilledThisWave++;
+                        }
                         break;
                     }
                 }
             }
 
             // Particles
-            for (let i = particles.length - 1; i >= 0; i--) {
+            for (let i=particles.length-1; i>=0; i--) {
                 const p = particles[i];
-                p.x += p.vx;
-                p.y += p.vy;
-                p.life -= 1;
-                if (p.life <= 0) particles.splice(i, 1);
+                p.x += p.vx; p.y += p.vy; p.life--;
+                if (p.life <= 0) particles.splice(i,1);
             }
 
-            // Spawn
-            if (now - lastSpawnTime > spawnInterval) {
+            // Spawn enemies
+            const now = Date.now();
+            if (enemies.length < 12 && now - lastSpawnTime > spawnInterval && enemiesKilledThisWave < waveEnemyTarget) {
                 spawnEnemy();
                 lastSpawnTime = now;
-                if (Math.random() < 0.35 && enemies.length < 12) {
-                    setTimeout(() => { if (gameState === 'playing') spawnEnemy(); }, 180);
-                }
+            }
+
+            // Check wave clear
+            if (enemiesKilledThisWave >= waveEnemyTarget && enemies.length === 0) {
+                showUpgradeScreen();
+            }
+
+            // Update wave display
+            waveDisplay.textContent = `第 ${currentWave} 波 | 得分: ${score}`;
+        }
+
+        function spawnEnemy() {
+            const side = Math.floor(Math.random()*4);
+            let x,y;
+            if (side===0) {x=Math.random()*canvas.width; y=-30;}
+            else if (side===1){x=canvas.width+30; y=Math.random()*canvas.height;}
+            else if (side===2){x=Math.random()*canvas.width; y=canvas.height+30;}
+            else {x=-30; y=Math.random()*canvas.height;}
+
+            enemies.push({
+                x, y,
+                radius: 16,
+                speed: 1.6 + currentWave * 0.12,
+                health: 1 + Math.floor(currentWave / 3)
+            });
+        }
+
+        function createExplosion(x, y) {
+            for(let i=0; i<10; i++){
+                const ang = Math.random()*Math.PI*2;
+                particles.push({x,y, vx:Math.cos(ang)* (2+Math.random()*3), vy:Math.sin(ang)*(2+Math.random()*3), life:25+Math.random()*15, size:3});
             }
         }
 
-        function drawBackground() {
+        function draw() {
             ctx.fillStyle = '#0f172a';
-            ctx.fillRect(0, 0, 800, 600);
+            ctx.fillRect(0,0,canvas.width,canvas.height);
+
+            // Grid
             ctx.strokeStyle = '#1e2937';
             ctx.lineWidth = 1;
-            for (let x = 40; x < 800; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 600); ctx.stroke(); }
-            for (let y = 40; y < 600; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(800, y); ctx.stroke(); }
-        }
-
-        function drawGame() {
-            drawBackground();
-
-            // Bullets
-            ctx.fillStyle = '#eab308';
-            for (let b of bullets) {
-                ctx.beginPath(); ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2); ctx.fill();
-                ctx.fillStyle = '#fef08c';
-                ctx.beginPath(); ctx.arc(b.x - b.vx * 0.4, b.y - b.vy * 0.4, 2.5, 0, Math.PI * 2); ctx.fill();
-                ctx.fillStyle = '#eab308';
-            }
+            for(let x=0; x<canvas.width; x+=45) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
+            for(let y=0; y<canvas.height; y+=45) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
 
             // Enemies
-            for (let e of enemies) {
-                ctx.fillStyle = '#dc2626';
-                ctx.beginPath(); ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2); ctx.fill();
-                ctx.fillStyle = '#7f1d1d';
-                ctx.beginPath(); ctx.arc(e.x, e.y, e.radius * 0.55, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#ef4444';
+            for(let e of enemies){
+                ctx.beginPath(); ctx.arc(e.x, e.y, e.radius, 0, Math.PI*2); ctx.fill();
             }
 
-            // Player
+            // Player + Turret
             ctx.save();
             ctx.translate(player.x, player.y);
             ctx.rotate(player.angle);
+            // Body
             ctx.fillStyle = '#22c55e';
-            ctx.beginPath(); ctx.arc(0, 0, player.radius, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(0,0,player.radius,0,Math.PI*2); ctx.fill();
+            // Turret
             ctx.fillStyle = '#166534';
-            ctx.fillRect(player.radius - 3, -5, 28, 10);
-            ctx.fillStyle = '#4ade80';
-            ctx.beginPath(); ctx.arc(6, 0, 9, 0, Math.PI * 2); ctx.fill();
+            ctx.fillRect(8, -6, 32, 12);
             ctx.restore();
 
+            // Bullets
+            ctx.fillStyle = '#facc15';
+            for(let b of bullets){
+                ctx.beginPath(); ctx.arc(b.x,b.y,5,0,Math.PI*2); ctx.fill();
+            }
+
             // Particles
-            for (let p of particles) {
-                ctx.globalAlpha = Math.max(0.1, p.life / 35);
-                ctx.fillStyle = '#f97316';
-                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#f97316';
+            for(let p of particles){
+                ctx.globalAlpha = p.life / 35;
+                ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill();
             }
             ctx.globalAlpha = 1;
 
             // UI
             ctx.fillStyle = '#e0f2fe';
-            ctx.font = 'bold 26px Segoe UI, Arial';
-            ctx.fillText('得分: ' + score, 25, 42);
-
-            ctx.fillStyle = '#334155';
-            ctx.fillRect(25, 55, 220, 22);
-            const hpPercent = Math.max(0, playerHealth / 100);
-            ctx.fillStyle = (hpPercent > 0.5) ? '#22c55e' : (hpPercent > 0.25 ? '#eab308' : '#ef4444');
-            ctx.fillRect(25, 55, 220 * hpPercent, 22);
-            ctx.strokeStyle = '#64748b';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(25, 55, 220, 22);
-            ctx.fillStyle = '#e0f2fe';
-            ctx.font = '14px Arial';
-            ctx.fillText('生命值', 255, 72);
-
-            ctx.fillStyle = '#64748b';
-            ctx.font = '13px Arial';
-            ctx.fillText(isTouchDevice ? '触摸移动移动 | 触摸射击' : 'WASD 移动 | 鼠标射击', 25, 585);
-        }
-
-        function drawStartScreen() {
-            drawBackground();
-            ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
-            ctx.fillRect(0, 0, 800, 600);
-            ctx.fillStyle = '#22c55e';
-            ctx.font = 'bold 52px Segoe UI, Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('兵峰射击游戏', 400, 200);
-            ctx.font = '22px Arial';
-            ctx.fillStyle = '#bae6fd';
-            ctx.fillText('Mobile Ready', 400, 245);
-            ctx.font = '18px Arial';
-            ctx.fillStyle = '#cbd5e1';
-            ctx.fillText('触摸屏幕移动士兵', 400, 310);
-            ctx.fillText('触摸目标区域自动移动并射击', 400, 345);
-            ctx.font = 'bold 20px Arial';
-            ctx.fillStyle = '#4ade80';
-            ctx.fillText('点击开始游戏', 400, 420);
-            ctx.textAlign = 'left';
-        }
-
-        function drawGameOverScreen() {
-            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-            ctx.fillRect(0, 0, 800, 600);
-            ctx.fillStyle = '#ef4444';
-            ctx.font = 'bold 46px Segoe UI, Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText('游戏结束', 400, 180);
-            ctx.fillStyle = '#e0f2fe';
-            ctx.font = '28px Arial';
-            ctx.fillText('最终得分: ' + score, 400, 250);
-            ctx.font = '20px Arial';
-            ctx.fillStyle = '#94a3b8';
-            ctx.fillText('点击重新开始', 400, 320);
-            ctx.textAlign = 'left';
+            ctx.font = 'bold 22px system-ui';
+            ctx.fillText(`HP: ${Math.max(0, Math.floor(player.health))}`, 20, 35);
+            ctx.fillText(`第${currentWave}波`, canvas.width - 90, 35);
         }
 
         function gameLoop() {
-            if (gameState === 'playing') updateGame();
+            if (gameState === 'playing') update();
+            draw();
 
-            if (gameState === 'start') drawStartScreen();
-            else if (gameState === 'playing') drawGame();
-            else if (gameState === 'gameover') drawGameOverScreen();
+            if (gameState === 'start') {
+                ctx.fillStyle = 'rgba(15,23,42,0.85)';
+                ctx.fillRect(0,0,canvas.width,canvas.height);
+                ctx.fillStyle = '#22c55e';
+                ctx.font = 'bold 42px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('兵峰射击游戏', canvas.width/2, canvas.height*0.35);
+                ctx.font = '22px system-ui';
+                ctx.fillStyle = '#bae6fd';
+                ctx.fillText('触摸屏幕移动 | 自动瞄准射击', canvas.width/2, canvas.height*0.45);
+                ctx.font = '20px system-ui';
+                ctx.fillStyle = '#4ade80';
+                ctx.fillText('点击开始', canvas.width/2, canvas.height*0.6);
+                ctx.textAlign = 'left';
+            }
+
+            if (gameState === 'gameover') {
+                ctx.fillStyle = 'rgba(15,23,42,0.9)';
+                ctx.fillRect(0,0,canvas.width,canvas.height);
+                ctx.fillStyle = '#ef4444';
+                ctx.font = 'bold 48px system-ui';
+                ctx.textAlign = 'center';
+                ctx.fillText('游戏结束', canvas.width/2, canvas.height*0.35);
+                ctx.fillStyle = '#e0f2fe';
+                ctx.font = '26px system-ui';
+                ctx.fillText(`最终得分: ${score}`, canvas.width/2, canvas.height*0.48);
+                ctx.font = '20px system-ui';
+                ctx.fillStyle = '#94a3b8';
+                ctx.fillText('点击重新开始', canvas.width/2, canvas.height*0.6);
+            }
 
             requestAnimationFrame(gameLoop);
         }
 
-        function resetGame() {
-            player.x = 400; player.y = 300; playerHealth = 100; score = 0;
+        function startNewRun() {
+            player.x = canvas.width / 2;
+            player.y = canvas.height / 2;
+            player.health = player.maxHealth;
+            score = 0;
+            currentWave = 1;
+            enemiesKilledThisWave = 0;
+            waveEnemyTarget = 8;
             bullets = []; enemies = []; particles = [];
-            spawnInterval = 1100; lastShotTime = 0; mouse.down = false;
-            keys = {}; touchActive = false;
-        }
-
-        function startGame() {
-            resetGame();
-            gameState = 'playing';
+            lastShotTime = 0;
             lastSpawnTime = Date.now();
-            setTimeout(() => { if (gameState === 'playing') spawnEnemy(); }, 300);
-            setTimeout(() => { if (gameState === 'playing') spawnEnemy(); }, 600);
+            spawnInterval = 900;
+            playerStats = { fireCooldown: 280, damage: 1, moveSpeed: 4.5, multiShot: 1 };
+            gameState = 'playing';
+            waveDisplay.style.display = 'block';
         }
 
-        // Desktop keyboard
-        window.addEventListener('keydown', (e) => {
-            keys[e.key.toLowerCase()] = true;
-            if ((e.key === ' ' || e.key.toLowerCase() === 'k') && gameState === 'playing') {
-                const now = Date.now();
-                if (now - lastShotTime > shootCooldown) { shoot(); lastShotTime = now; }
-            }
-        });
-        window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+        function showUpgradeScreen() {
+            gameState = 'upgrading';
+            upgradeOptions.innerHTML = '';
 
-        // Desktop mouse
-        canvas.addEventListener('mousemove', (e) => {
-            const rect = canvas.getBoundingClientRect();
-            const scaleX = 800 / rect.width;
-            const scaleY = 600 / rect.height;
-            mouse.x = (e.clientX - rect.left) * scaleX;
-            mouse.y = (e.clientY - rect.top) * scaleY;
-        });
+            const upgrades = [
+                { name: '快速射击', desc: '射速 +25%', effect: () => { playerStats.fireCooldown = Math.max(120, playerStats.fireCooldown * 0.75); } },
+                { name: '增加伤害', desc: '弹弹伤害 +1', effect: () => { playerStats.damage += 1; } },
+                { name: '多重射击', desc: '一次发射 2 发', effect: () => { playerStats.multiShot = Math.min(3, playerStats.multiShot + 1); } },
+                { name: '移动加速', desc: '移动速度 +15%', effect: () => { playerStats.moveSpeed *= 1.15; } }
+            ];
 
-        canvas.addEventListener('mousedown', (e) => {
-            mouse.down = true;
-            if (gameState === 'start') startGame();
-            else if (gameState === 'gameover') { resetGame(); gameState = 'playing'; lastSpawnTime = Date.now(); }
-            else if (gameState === 'playing') {
-                const now = Date.now();
-                if (now - lastShotTime > shootCooldown) { shoot(); lastShotTime = now; }
-            }
-        });
-        canvas.addEventListener('mouseup', () => { mouse.down = false; });
+            // Pick 3 random
+            const chosen = upgrades.sort(() => 0.5 - Math.random()).slice(0, 3);
 
-        // Mobile touch controls
-        function getTouchPos(e) {
-            const rect = canvas.getBoundingClientRect();
-            const scaleX = 800 / rect.width;
-            const scaleY = 600 / rect.height;
-            const touch = e.touches[0] || e.changedTouches[0];
-            return {
-                x: (touch.clientX - rect.left) * scaleX,
-                y: (touch.clientY - rect.top) * scaleY
-            };
+            chosen.forEach(up => {
+                const btn = document.createElement('div');
+                btn.className = 'upgrade-btn';
+                btn.innerHTML = `<strong>${up.name}</strong><br><small>${up.desc}</small>`;
+                btn.onclick = () => {
+                    up.effect();
+                    upgradeOverlay.style.display = 'none';
+                    // Next wave
+                    currentWave++;
+                    enemiesKilledThisWave = 0;
+                    waveEnemyTarget = 8 + currentWave * 3;
+                    spawnInterval = Math.max(450, spawnInterval - 60);
+                    gameState = 'playing';
+                    lastSpawnTime = Date.now();
+                };
+                upgradeOptions.appendChild(btn);
+            });
+
+            upgradeOverlay.style.display = 'flex';
         }
 
-        canvas.addEventListener('touchstart', (e) => {
+        // Touch controls - only movement
+        function handleTouch(e) {
             e.preventDefault();
-            isTouchDevice = true;
-            const pos = getTouchPos(e);
-            touchX = pos.x; touchY = pos.y;
+            const rect = canvas.getBoundingClientRect();
+            const touch = e.touches[0] || e.changedTouches[0];
+            touchTargetX = (touch.clientX - rect.left);
+            touchTargetY = (touch.clientY - rect.top);
             touchActive = true;
 
             if (gameState === 'start') {
-                startGame();
+                startNewRun();
             } else if (gameState === 'gameover') {
-                resetGame();
-                gameState = 'playing';
-                lastSpawnTime = Date.now();
-            } else if (gameState === 'playing') {
-                // Immediate shoot on touch
-                const now = Date.now();
-                if (now - lastShotTime > shootCooldown) { shoot(); lastShotTime = now; }
-            }
-        }, { passive: false });
-
-        canvas.addEventListener('touchmove', (e) => {
-            e.preventDefault();
-            const pos = getTouchPos(e);
-            touchX = pos.x; touchY = pos.y;
-        }, { passive: false });
-
-        canvas.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            touchActive = false;
-        }, { passive: false });
-
-        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
-        function toggleFullscreen() {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(() => {});
-            } else {
-                document.exitFullscreen().catch(() => {});
+                startNewRun();
             }
         }
 
-        // Detect touch device
-        if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
-            isTouchDevice = true;
-        }
+        canvas.addEventListener('touchstart', handleTouch, {passive: false});
+        canvas.addEventListener('touchmove', handleTouch, {passive: false});
+        canvas.addEventListener('touchend', () => { touchActive = false; }, {passive: false});
 
-        // Start game loop
+        // Also allow mouse for testing
+        canvas.addEventListener('mousedown', (e) => {
+            if (gameState === 'start' || gameState === 'gameover') {
+                startNewRun();
+            }
+            touchActive = true;
+            touchTargetX = e.offsetX;
+            touchTargetY = e.offsetY;
+        });
+        canvas.addEventListener('mousemove', (e) => {
+            if (touchActive) {
+                touchTargetX = e.offsetX;
+                touchTargetY = e.offsetY;
+            }
+        });
+        canvas.addEventListener('mouseup', () => touchActive = false);
+
+        // Prevent context menu
+        canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+        // Initial resize
+        resizeCanvas();
+
+        // Start loop
         gameLoop();
+
+        // Show start hint
+        setTimeout(() => {
+            if (gameState === 'start') {
+                // already drawn in loop
+            }
+        }, 500);
     </script>
 </body>
 </html>
